@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>To‑Do (Local)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- PWA manifest -->
+  <link rel="manifest" href="manifest.json">
+
+  <!-- Theme color for browser UI -->
+  <meta name="theme-color" content="#1e1f22">
+
+  <!-- iOS PWA support -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+
+  <!-- Dexie (IndexedDB helper) -->
+  <script src="https://unpkg.com/dexie@4/dist/dexie.js"></script>
+
+  <style>
+    /* Discord dark-ish theme */
+    :root {
+      --bg: #0b0e12;
+      --panel: #1e1f22;
+      --panel-2: #2b2d31;
+      --text: #e6e6e6;
+      --muted: #b5bac1;
+      --border: #3e4147;
+      --accent: #5865f2;
+      --accent-2: #57f287;
+      --danger: #ed4245;
+      --hover: #23262b;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans";
+    }
+
+    /* Main layout */
+    .app {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      height: 100vh;
+    }
+
+    /* Top menu bar */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .title { font-weight: 700; }
+    .menu-actions { display: flex; gap: 8px; }
+    .btn {
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background .15s ease, border-color .15s ease, color .15s ease;
+    }
+    .btn:hover { background: var(--hover); }
+    .btn.primary { border-color: var(--accent); color: var(--accent); }
+    .btn.success { border-color: var(--accent-2); color: var(--accent-2); }
+    .btn.danger { border-color: var(--danger); color: var(--danger); }
+    .btn.muted { color: var(--muted); border-color: var(--border); }
+
+    /* Middle list view */
+    .content {
+      padding: 10px 12px 80px;
+      overflow: auto;
+    }
+    .list {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--panel-2);
+      cursor: pointer;
+    }
+    .row:hover { border-color: #50545c; }
+    .row-title {
+      font-weight: 600;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .color-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      display: inline-block;
+    }
+    .row-desc {
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .row-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+    }
+    .badge.complete { color: var(--accent-2); border-color: var(--accent-2); }
+    .badge.peek { color: var(--accent); border-color: var(--accent); }
+    .empty {
+      max-width: 900px;
+      margin: 24px auto;
+      padding: 18px;
+      border: 1px dashed var(--border);
+      border-radius: 12px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    /* Bottom navigation bar */
+    .bottombar {
+      position: sticky;
+      bottom: 0;
+      background: var(--panel);
+      border-top: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      padding: 8px;
+      z-index: 10;
+    }
+    .navbtn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+    }
+    .navbtn.active {
+      color: var(--accent);
+      border-color: var(--accent);
+      background: #232538;
+      font-weight: 600;
+    }
+
+    /* Modals (mini-menus) */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    .modal-backdrop.show { display: flex; }
+    .modal {
+      width: min(760px, 94vw);
+      max-height: 90vh;
+      overflow-y: auto;
+      background: #141619;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.45);
+    }
+    .modal h3 { margin: 0 0 12px 0; }
+    .separator { margin: 16px 0; border-top: 1px solid var(--border); }
+    .section-title { font-weight: 700; margin-bottom: 8px; }
+    .field { margin: 10px 0; display: grid; gap: 6px; }
+    .field label { color: var(--muted); font-size: 14px; }
+    .input, .textarea, .checkbox, .select, .date {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #0d0f13;
+      color: var(--text);
+      outline: none;
+    }
+    .textarea { min-height: 120px; resize: vertical; }
+    .checkbox-row { display: flex; align-items: center; gap: 8px; }
+    .checkbox { width: auto; padding: 0; }
+    .inline-fields {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .notes-list { display: grid; gap: 8px; }
+    .note-row {
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #101317;
+      cursor: pointer;
+    }
+    .note-row:hover { border-color: #50545c; }
+    .note-content { color: var(--text); white-space: pre-wrap; }
+    .note-meta { color: var(--muted); font-size: 0.85rem; margin-top: 6px; }
+
+    @media (max-width: 720px) {
+      .inline-fields { grid-template-columns: 1fr; }
+      .row-meta {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Top menu bar -->
+    <header class="topbar">
+      <div class="title" id="viewTitle">To‑Do</div>
+      <div class="menu-actions">
+        <button class="btn primary" id="addBtn">+ Add</button>
+      </div>
+    </header>
+
+    <!-- Middle list view -->
+    <main class="content">
+      <div id="list" class="list"></div>
+      <div id="empty" class="empty" style="display:none;">No tasks here yet.</div>
+    </main>
+
+    <!-- Bottom navigation bar -->
+    <footer class="bottombar">
+      <button class="navbtn active" data-dest="todo">To‑Do</button>
+      <button class="navbtn" data-dest="snoozed">Snoozed</button>
+      <button class="navbtn" data-dest="completed">Completed</button>
+    </footer>
+  </div>
+
+  <!-- Add Task Modal -->
+  <div class="modal-backdrop" id="addModal">
+    <div class="modal">
+      <h3>Add Task</h3>
+      <div class="field">
+        <label for="addTitle">Title</label>
+        <input id="addTitle" class="input" placeholder="Short title" />
+      </div>
+      <div class="field">
+        <label for="addDesc">Description</label>
+        <textarea id="addDesc" class="textarea" placeholder="Details"></textarea>
+      </div>
+      <div class="inline-fields">
+        <div class="field">
+          <label for="addTag">Tag color</label>
+          <select id="addTag" class="select">
+            <option value="">None</option>
+            <option value="#e72d2d">#e72d2d (red)</option>
+            <option value="#fa7d00">#fa7d00 (orange)</option>
+            <option value="#007d00">#007d00 (green)</option>
+            <option value="#b50454">#b50454 (pink)</option>
+            <option value="#9152a1">#9152a1 (purple)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="addSnooze">Snooze date</label>
+          <input id="addSnooze" type="date" class="date" />
+        </div>
+      </div>
+      <div class="inline-fields">
+        <div class="field">
+          <label for="addFrequency">Frequency</label>
+          <select id="addFrequency" class="select">
+            <option value="">None</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="addReoccur">Reoccur date</label>
+          <input id="addReoccur" type="date" class="date" />
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn muted" id="addCancel">Cancel</button>
+        <button class="btn primary" id="addSave">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Task Modal -->
+  <div class="modal-backdrop" id="editModal">
+    <div class="modal">
+      <h3>Edit Task</h3>
+      <div class="field">
+        <label for="editTitle">Title</label>
+        <input id="editTitle" class="input" />
+      </div>
+      <div class="field">
+        <label for="editDesc">Description</label>
+        <textarea id="editDesc" class="textarea"></textarea>
+      </div>
+      <div class="inline-fields">
+        <div class="field">
+          <label for="editTag">Tag color</label>
+          <select id="editTag" class="select">
+            <option value="">None</option>
+            <option value="#e72d2d">#e72d2d (red)</option>
+            <option value="#fa7d00">#fa7d00 (orange)</option>
+            <option value="#007d00">#007d00 (green)</option>
+            <option value="#b50454">#b50454 (pink)</option>
+            <option value="#9152a1">#9152a1 (purple)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="editSnooze">Snooze date</label>
+          <input id="editSnooze" type="date" class="date" />
+        </div>
+      </div>
+      <div class="inline-fields">
+        <div class="field">
+          <label for="editFrequency">Frequency</label>
+          <select id="editFrequency" class="select">
+            <option value="">None</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="editReoccur">Reoccur date</label>
+          <input id="editReoccur" type="date" class="date" />
+        </div>
+      </div>
+      <div class="field checkbox-row">
+        <input type="checkbox" id="editComplete" class="checkbox" />
+        <label for="editComplete">Complete</label>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn muted" id="editCancel">Cancel</button>
+        <button class="btn primary" id="editSave">Save</button>
+        <button class="btn danger" id="editDelete">Delete</button>
+      </div>
+
+      <div class="separator"></div>
+      <div class="section-title">Task Notes</div>
+      <div class="menu-actions" style="margin-bottom:8px;">
+        <button class="btn primary" id="noteAddBtn">+ Add</button>
+      </div>
+      <div id="notesList" class="notes-list"></div>
+    </div>
+  </div>
+
+  <!-- Add Note Modal -->
+  <div class="modal-backdrop" id="addNoteModal">
+    <div class="modal">
+      <h3>Add Note</h3>
+      <div class="field">
+        <label for="addNoteContent">Note</label>
+        <textarea id="addNoteContent" class="textarea" placeholder="Type your note..."></textarea>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn muted" id="addNoteCancel">Cancel</button>
+        <button class="btn primary" id="addNoteSave">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Note Modal -->
+  <div class="modal-backdrop" id="editNoteModal">
+    <div class="modal">
+      <h3>Edit Note</h3>
+      <div class="field">
+        <label for="editNoteContent">Note</label>
+        <textarea id="editNoteContent" class="textarea"></textarea>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn muted" id="editNoteCancel">Cancel</button>
+        <button class="btn primary" id="editNoteSave">Save</button>
+        <button class="btn danger" id="editNoteDelete">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ---- Database (IndexedDB via Dexie) ----
+    const db = new Dexie('todoDb');
+    db.version(2).stores({
+      tasks: '++taskId, dateCreated, isComplete, snoozeDate, tag, frequency, reoccurDate',
+      notes: '++noteId, relatedTask, dateCreated'
+    });
+
+    // ---- Constants & Utilities ----
+    const fmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    const fmtDateOnly = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+    const tagPriority = {
+      '#e72d2d': 5,
+      '#fa7d00': 4,
+      '#007d00': 3,
+      '#b50454': 2,
+      '#9152a1': 1
+    };
+
+    function priorityOf(tag) { return tagPriority[tag] || 0; }
+    function todayMidnightMs() {
+      const d = new Date();
+      d.setHours(0,0,0,0);
+      return d.getTime();
+    }
+    function toDateInputValue(ms) {
+      if (!Number.isFinite(ms)) return '';
+      const d = new Date(ms);
+      const year = d.getFullYear();
+      const month = String(d.getMonth()+1).padStart(2,'0');
+      const day = String(d.getDate()).padStart(2,'0');
+      return `${year}-${month}-${day}`;
+    }
+    function fromDateInputValue(str) {
+      if (!str) return null;
+      const d = new Date(str + 'T00:00:00');
+      return d.getTime();
+    }
+    function addDays(ms, days) { return ms + days*24*60*60*1000; }
+    function nextReoccur(ms, freq) {
+      if (!freq) return null;
+      const d = new Date(ms);
+      if (freq === 'daily') d.setDate(d.getDate()+1);
+      else if (freq === 'weekly') d.setDate(d.getDate()+7);
+      else if (freq === 'monthly') d.setMonth(d.getMonth()+1);
+      d.setHours(0,0,0,0);
+      return d.getTime();
+    }
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    // ---- State ----
+    let destination = 'todo'; // 'todo' | 'snoozed' | 'completed'
+    let currentEditId = null;
+    let currentEditNoteId = null;
+
+    // ---- Recurrence processing (reactivate same task, no copies) ----
+    async function processRecurrences() {
+      const today = todayMidnightMs();
+
+      // Frequency set, no reoccur date: auto-assign based on today
+      const freqNoDate = await db.tasks
+        .filter(t => t && t.frequency && !Number.isFinite(t.reoccurDate))
+        .toArray();
+      for (const t of freqNoDate) {
+        const next = nextReoccur(today, t.frequency);
+        await db.tasks.update(t.taskId, { reoccurDate: next });
+      }
+
+      // Tasks with reoccurDate due
+      const due = await db.tasks
+        .filter(t => Number.isFinite(t.reoccurDate) && t.reoccurDate <= today)
+        .toArray();
+
+      for (const t of due) {
+        const hasFreq = !!t.frequency;
+        if (hasFreq) {
+          // Reactivate and advance reoccur date by frequency
+          const next = nextReoccur(t.reoccurDate, t.frequency);
+          await db.tasks.update(t.taskId, { isComplete: false, reoccurDate: next });
+        } else {
+          // One-time reoccur: reactivate and clear reoccurDate
+          await db.tasks.update(t.taskId, { isComplete: false, reoccurDate: null });
+        }
+      }
+    }
+
+    // ---- Filtering & Sorting ----
+    function isTodo(t) {
+      if (t.isComplete) return false;
+      if (!Number.isFinite(t.snoozeDate)) return true;
+      const today = todayMidnightMs();
+      return today <= t.snoozeDate;
+    }
+    function isSnoozed(t) {
+      if (t.isComplete) return false;
+      if (!Number.isFinite(t.snoozeDate)) return false;
+      const today = todayMidnightMs();
+      return today > t.snoozeDate;
+    }
+    function isCompleted(t) { return !!t.isComplete; }
+
+    function sortByTagThenDate(tasks) {
+      return tasks.slice().sort((a, b) => {
+        const pa = priorityOf(a.tag);
+        const pb = priorityOf(b.tag);
+        if (pa !== pb) return pb - pa;
+        const da = Number.isFinite(a.dateCreated) ? a.dateCreated : 0;
+        const dbv = Number.isFinite(b.dateCreated) ? b.dateCreated : 0;
+        return dbv - da; // most recent first
+      });
+    }
+
+    // ---- Queries ----
+    async function getTodo() {
+      const arr = await db.tasks.toArray();
+      return sortByTagThenDate(arr.filter(isTodo));
+    }
+    async function getSnoozed() {
+      const arr = await db.tasks.toArray();
+      return sortByTagThenDate(arr.filter(isSnoozed));
+    }
+    async function getCompleted() {
+      const arr = await db.tasks.toArray();
+      return sortByTagThenDate(arr.filter(isCompleted));
+    }
+
+    // ---- CRUD: Tasks ----
+    async function addTask(data) {
+      const ttl = (data.title || '').trim();
+      const dsc = (data.description || '').trim();
+      if (!ttl) { alert('Title is required.'); return; }
+
+      const today = todayMidnightMs();
+      const defaultSnooze = addDays(today, 7);
+      const snoozeMs = data.snoozeDate != null ? data.snoozeDate : defaultSnooze;
+
+      const frequency = data.frequency || '';
+      let reoccurMs = data.reoccurDate || null;
+      if (frequency && !reoccurMs) reoccurMs = nextReoccur(today, frequency);
+
+      const newId = await db.tasks.add({
+        title: ttl,
+        description: dsc,
+        dateCreated: Date.now(),
+        isComplete: false,
+        tag: data.tag || '',
+        snoozeDate: snoozeMs,
+        frequency,
+        reoccurDate: reoccurMs
+      });
+      return newId;
+    }
+
+    async function saveEdits(taskId, data) {
+      const ttl = (data.title || '').trim();
+      const dsc = (data.description || '').trim();
+
+      let reoccurMs = data.reoccurDate;
+      const freq = data.frequency || '';
+      if (freq && !Number.isFinite(reoccurMs)) {
+        reoccurMs = nextReoccur(todayMidnightMs(), freq);
+      }
+
+      await db.tasks.update(taskId, {
+        title: ttl,
+        description: dsc,
+        isComplete: !!data.isComplete,
+        tag: data.tag || '',
+        snoozeDate: Number.isFinite(data.snoozeDate) ? data.snoozeDate : null,
+        frequency: freq,
+        reoccurDate: Number.isFinite(reoccurMs) ? reoccurMs : null
+      });
+    }
+
+    async function deleteTask(taskId) {
+      // Cascade delete notes
+      const relatedNotes = await db.notes.where('relatedTask').equals(taskId).toArray();
+      const ids = relatedNotes.map(n => n.noteId);
+      if (ids.length) await db.notes.bulkDelete(ids);
+      await db.tasks.delete(taskId);
+    }
+
+    // ---- CRUD: Notes ----
+    async function addNote(relatedTaskId, content) {
+      const txt = (content || '').trim();
+      if (!txt) { alert('Note cannot be empty.'); return; }
+      await db.notes.add({
+        relatedTask: relatedTaskId,
+        content: txt,
+        dateCreated: Date.now()
+      });
+    }
+
+    async function updateNote(noteId, content) {
+      await db.notes.update(noteId, { content: (content || '').trim() });
+    }
+
+    async function deleteNote(noteId) {
+      await db.notes.delete(noteId);
+    }
+
+    async function getNotesForTask(taskId) {
+      return db.notes
+        .where('relatedTask').equals(taskId)
+        .reverse()
+        .sortBy('dateCreated');
+    }
+
+    // ---- UI elements ----
+    const viewTitleEl = document.getElementById('viewTitle');
+    const listEl = document.getElementById('list');
+    const emptyEl = document.getElementById('empty');
+
+    const addBtn = document.getElementById('addBtn');
+    const addModal = document.getElementById('addModal');
+    const addTitle = document.getElementById('addTitle');
+    const addDesc = document.getElementById('addDesc');
+    const addTag = document.getElementById('addTag');
+    const addSnooze = document.getElementById('addSnooze');
+    const addFrequency = document.getElementById('addFrequency');
+    const addReoccur = document.getElementById('addReoccur');
+    const addCancel = document.getElementById('addCancel');
+    const addSave = document.getElementById('addSave');
+
+    const editModal = document.getElementById('editModal');
+    const editTitle = document.getElementById('editTitle');
+    const editDesc = document.getElementById('editDesc');
+    const editTag = document.getElementById('editTag');
+    const editSnooze = document.getElementById('editSnooze');
+    const editFrequency = document.getElementById('editFrequency');
+    const editReoccur = document.getElementById('editReoccur');
+    const editComplete = document.getElementById('editComplete');
+    const editCancel = document.getElementById('editCancel');
+    const editSave = document.getElementById('editSave');
+    const editDelete = document.getElementById('editDelete');
+
+    const notesListEl = document.getElementById('notesList');
+    const noteAddBtn = document.getElementById('noteAddBtn');
+
+    const addNoteModal = document.getElementById('addNoteModal');
+    const addNoteContent = document.getElementById('addNoteContent');
+    const addNoteCancel = document.getElementById('addNoteCancel');
+    const addNoteSave = document.getElementById('addNoteSave');
+
+    const editNoteModal = document.getElementById('editNoteModal');
+    const editNoteContent = document.getElementById('editNoteContent');
+    const editNoteCancel = document.getElementById('editNoteCancel');
+    const editNoteSave = document.getElementById('editNoteSave');
+    const editNoteDelete = document.getElementById('editNoteDelete');
+
+    // ---- Navigation ----
+    document.querySelectorAll('.navbtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        destination = btn.dataset.dest;
+        document.querySelectorAll('.navbtn').forEach(b => b.classList.toggle('active', b === btn));
+        addBtn.style.display = destination === 'todo' ? '' : 'none';
+        render();
+      });
+    });
+
+    // ---- Add Task modal ----
+    addBtn.addEventListener('click', () => {
+      addTitle.value = '';
+      addDesc.value = '';
+      addTag.value = '';
+      const today = todayMidnightMs();
+      addSnooze.value = toDateInputValue(addDays(today, 7)); // default 1 week
+      addFrequency.value = '';
+      addReoccur.value = '';
+      addModal.classList.add('show');
+      addTitle.focus();
+    });
+    addCancel.addEventListener('click', () => addModal.classList.remove('show'));
+    addModal.addEventListener('click', (e) => {
+      if (e.target === addModal) addModal.classList.remove('show');
+    });
+    addSave.addEventListener('click', async () => {
+      try {
+        const data = {
+          title: addTitle.value,
+          description: addDesc.value,
+          tag: addTag.value || '',
+          snoozeDate: fromDateInputValue(addSnooze.value),
+          frequency: addFrequency.value || '',
+          reoccurDate: fromDateInputValue(addReoccur.value)
+        };
+        await addTask(data);
+        addModal.classList.remove('show');
+        await render();
+      } catch (err) {
+        console.error(err);
+        alert('Save failed: ' + (err?.message || err));
+      }
+    });
+
+    // ---- Edit Task modal ----
+    editCancel.addEventListener('click', () => {
+      editModal.classList.remove('show');
+      currentEditId = null;
+    });
+    editModal.addEventListener('click', (e) => {
+      if (e.target === editModal) {
+        editModal.classList.remove('show');
+        currentEditId = null;
+      }
+    });
+    editSave.addEventListener('click', async () => {
+      if (currentEditId == null) return;
+      try {
+        const data = {
+          title: editTitle.value,
+          description: editDesc.value,
+          isComplete: editComplete.checked,
+          tag: editTag.value || '',
+          snoozeDate: fromDateInputValue(editSnooze.value),
+          frequency: editFrequency.value || '',
+          reoccurDate: fromDateInputValue(editReoccur.value)
+        };
+        await saveEdits(currentEditId, data);
+        editModal.classList.remove('show');
+        currentEditId = null;
+        await render();
+      } catch (err) {
+        console.error(err);
+        alert('Save failed: ' + (err?.message || err));
+      }
+    });
+    editDelete.addEventListener('click', async () => {
+      if (currentEditId == null) return;
+      try {
+        await deleteTask(currentEditId);
+        editModal.classList.remove('show');
+        currentEditId = null;
+        await render();
+      } catch (err) {
+        console.error(err);
+        alert('Delete failed: ' + (err?.message || err));
+      }
+    });
+
+    // ---- Notes: add/edit/delete ----
+    noteAddBtn.addEventListener('click', () => {
+      if (currentEditId == null) { alert('Open a task first.'); return; }
+      addNoteContent.value = '';
+      addNoteModal.classList.add('show');
+      addNoteContent.focus();
+    });
+    addNoteCancel.addEventListener('click', () => addNoteModal.classList.remove('show'));
+    addNoteModal.addEventListener('click', (e) => {
+      if (e.target === addNoteModal) addNoteModal.classList.remove('show');
+    });
+    addNoteSave.addEventListener('click', async () => {
+      if (currentEditId == null) return;
+      try {
+        await addNote(currentEditId, addNoteContent.value);
+        addNoteModal.classList.remove('show');
+        await renderNotes(currentEditId);
+      } catch (err) {
+        console.error(err);
+        alert('Save note failed: ' + (err?.message || err));
+      }
+    });
+
+    editNoteCancel.addEventListener('click', () => {
+      editNoteModal.classList.remove('show');
+      currentEditNoteId = null;
+    });
+    editNoteModal.addEventListener('click', (e) => {
+      if (e.target === editNoteModal) {
+        editNoteModal.classList.remove('show');
+        currentEditNoteId = null;
+      }
+    });
+    editNoteSave.addEventListener('click', async () => {
+      if (currentEditNoteId == null) return;
+      try {
+        await updateNote(currentEditNoteId, editNoteContent.value);
+        editNoteModal.classList.remove('show');
+        currentEditNoteId = null;
+        if (currentEditId != null) await renderNotes(currentEditId);
+      } catch (err) {
+        console.error(err);
+        alert('Save note failed: ' + (err?.message || err));
+      }
+    });
+    editNoteDelete.addEventListener('click', async () => {
+      if (currentEditNoteId == null) return;
+      try {
+        await deleteNote(currentEditNoteId);
+        editNoteModal.classList.remove('show');
+        currentEditNoteId = null;
+        if (currentEditId != null) await renderNotes(currentEditId);
+      } catch (err) {
+        console.error(err);
+        alert('Delete note failed: ' + (err?.message || err));
+      }
+    });
+
+    async function renderNotes(taskId) {
+      const notes = await getNotesForTask(taskId);
+      notesListEl.innerHTML = '';
+      if (!notes.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.style.margin = '8px 0';
+        empty.textContent = 'No notes yet.';
+        notesListEl.appendChild(empty);
+        return;
+      }
+      for (const n of notes) {
+        const el = document.createElement('div');
+        el.className = 'note-row';
+        el.innerHTML = `
+          <div class="note-content">${escapeHtml(n.content || '')}</div>
+          <div class="note-meta">Created ${fmt.format(new Date(n.dateCreated))}</div>
+        `;
+        el.addEventListener('click', () => {
+          currentEditNoteId = n.noteId;
+          editNoteContent.value = n.content || '';
+          editNoteModal.classList.add('show');
+          editNoteContent.focus();
+        });
+        notesListEl.appendChild(el);
+      }
+    }
+
+    // ---- Render list view with tag sorting and snoozed peek ----
+    async function render() {
+      await processRecurrences();
+
+      viewTitleEl.textContent =
+        destination === 'todo' ? 'To‑Do' :
+        destination === 'snoozed' ? 'Snoozed' : 'Completed';
+
+      let tasks = [];
+      if (destination === 'todo') tasks = await getTodo();
+      else if (destination === 'snoozed') tasks = await getSnoozed();
+      else tasks = await getCompleted();
+
+      // Inject a random Snoozed task at position 2 for To‑Do (peek), if available
+      let peekTask = null;
+      if (destination === 'todo') {
+        const snoozed = await getSnoozed();
+        if (snoozed.length > 0) {
+          peekTask = snoozed[Math.floor(Math.random() * snoozed.length)];
+          if (tasks.length >= 1) {
+            tasks = tasks.slice(0,1).concat([peekTask], tasks.slice(1));
+          } else {
+            tasks = [peekTask];
+          }
+        }
+      }
+
+      listEl.innerHTML = '';
+      if (!tasks.length) {
+        emptyEl.style.display = '';
+        return;
+      }
+      emptyEl.style.display = 'none';
+
+      for (const t of tasks) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        const dot = t.tag ? `<span class="color-dot" style="background:${t.tag};"></span>` : '';
+        const isPeek = peekTask && t.taskId === peekTask.taskId;
+        row.innerHTML = `
+          <div class="row-title">${dot}${escapeHtml(t.title || '(Untitled)')}</div>
+          <div class="row-desc">${escapeHtml(t.description || '')}</div>
+          <div class="row-meta">
+            <span>${fmt.format(new Date(t.dateCreated))}${Number.isFinite(t.snoozeDate) ? ' • Snooze: ' + fmtDateOnly.format(new Date(t.snoozeDate)) : ''}</span>
+            <span class="badge ${t.isComplete ? 'complete' : ''}">
+              ${t.isComplete ? 'Complete' : (isPeek ? 'Snoozed peek' : 'Active')}
+            </span>
+          </div>
+        `;
+        row.addEventListener('click', async () => {
+          currentEditId = t.taskId;
+          const fresh = await db.tasks.get(t.taskId);
+          if (!fresh) return;
+          editTitle.value = fresh.title || '';
+          editDesc.value = fresh.description || '';
+          editTag.value = fresh.tag || '';
+          editSnooze.value = toDateInputValue(Number.isFinite(fresh.snoozeDate) ? fresh.snoozeDate : null);
+          editFrequency.value = fresh.frequency || '';
+          editReoccur.value = toDateInputValue(Number.isFinite(fresh.reoccurDate) ? fresh.reoccurDate : null);
+          editComplete.checked = !!fresh.isComplete;
+          editModal.classList.add('show');
+          editTitle.focus();
+          await renderNotes(fresh.taskId);
+        });
+        listEl.appendChild(row);
+      }
+
+      addBtn.style.display = destination === 'todo' ? '' : 'none';
+    }
+
+    // Initial render
+    render();
+
+    // ---- PWA service worker registration ----
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('service-worker.js');
+    }
+  </script>
+</body>
+</html>
