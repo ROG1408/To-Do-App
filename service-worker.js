@@ -1,13 +1,10 @@
-const CACHE_NAME = "todo-cache-v2";
+const CACHE_NAME = "todo-cache-12-29";
 const FILES_TO_CACHE = [
   "./",
   "./index.html",
   "./manifest.json",
-  "./icon-192.png",
-  "./icon-512.png",
-  "./styles.css",
-  "./main.js"
-  // add any other JS/CSS/fonts/images the app uses
+  "./icons/icon-192.png",
+  "./icons/icon-512.png"
 ];
 
 self.addEventListener("install", event => {
