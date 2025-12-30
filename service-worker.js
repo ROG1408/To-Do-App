@@ -1,14 +1,18 @@
+const CACHE_NAME = "todo-cache-v2";
+const FILES_TO_CACHE = [
+  "./",
+  "./index.html",
+  "./manifest.json",
+  "./icon-192.png",
+  "./icon-512.png",
+  "./styles.css",
+  "./main.js"
+  // add any other JS/CSS/fonts/images the app uses
+];
+
 self.addEventListener("install", event => {
   event.waitUntil(
-    caches.open("todo-cache-v1").then(cache => {
-      return cache.addAll([
-        "./",
-        "./index.html",
-        "./manifest.json",
-        "./icon-192.png",
-        "./icon-512.png"
-      ]);
-    })
+    caches.open(CACHE_NAME).then(cache => cache.addAll(FILES_TO_CACHE))
   );
 });
 
